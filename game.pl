@@ -27,10 +27,10 @@ sub db {
 	return $schema   if $schema;
 
 	my $DB =  {
-		NAME => 'nazar',
+		NAME => 'game',
 		HOST => '127.0.0.1',
 		DRVR => 'Pg',
-		USER => 'gamer',
+		USER => 'gamer2',
 		PASS => 'V74F3iV4xQ1NAcdp',
 		PORT => '5433',
 	};
