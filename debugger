@@ -1,0 +1,1 @@
+PERL5DB="use DB::Hooks qw'::Terminal NonStop'" perl -Ilocal/lib/perl5 -d game.pl
