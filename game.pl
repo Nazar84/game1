@@ -5,6 +5,7 @@ use warnings;
 
 use Figura;
 
+use DDP;
 use SDL;
 use SDLx::App;
 use SDL::Event;
@@ -20,6 +21,24 @@ $app->add_show_handler ( \&show   );
 $app->add_move_handler ( \&move   );
 $app->add_event_handler( \&cursor );
 
+my @squares;
+
+
+my $selection;
+$app->add_event_handler( sub{ 
+	my $res =  group( @_, \@squares, $selection );
+	if( $res ) {
+		$selection =  $res;
+	}
+	print "$selection<<\n";
+});
+$app->add_event_handler( sub{ selection( @_, $selection ) } );
+$app->add_event_handler( sub{ 
+	if( create_group( @_, $selection, \@squares ) ) {
+		$selection =  undef;
+	}
+});
+
 use Schema;
 
 my $schema;
@@ -27,10 +46,10 @@ sub db {
 	return $schema   if $schema;
 
 	my $DB =  {
-		NAME => 'game',
+		NAME => 'game_i',
 		HOST => '127.0.0.1',
 		DRVR => 'Pg',
-		USER => 'gamer2',
+		USER => 'gamer_i',
 		PASS => 'V74F3iV4xQ1NAcdp',
 		PORT => '5433',
 	};
@@ -59,9 +78,8 @@ my $car = Figura->new( 0, 0, 50, 50, undef, 255, undef, 0, $scale_x, $scale_y );
 my $gun = Figura->new( 0, 0, 0, 0, 255, undef, undef, 0, $scale_x, $scale_y );
 
 my @db_squares = db()->resultset( 'Figura' )-> all;
-my @squares;
-
-for my $i( @db_squares ) {
+my @groups;
+for my $i( @db_squares) {
 
 		my $x            = $i->x / $scale_x;
 		my $y            = $i->y / $scale_y;
@@ -79,7 +97,7 @@ for my $i( @db_squares ) {
 	print "my \$x$id;\n";
 }
 
-for my $square ( @squares ){
+for my $square ( @squares, @groups ){
 	$square->draw( $app );
 }
 
@@ -262,7 +280,7 @@ sub mouse {
 
 		if( $event->type == SDL_MOUSEBUTTONUP ) {
 			$square->{ moving } = 0;
-			$square->{ blue }   = 0;
+			$square->{ blue   } = 0;
 			$square->draw( $app );
 		}
 	}
@@ -276,7 +294,7 @@ sub mouse {
 			&& $event->motion_y > $square->{ y }
 			&& $event->motion_y < $square->{ y } + ( 50 * $scale_y )
 		){
-			$square->{ green }   = 150;
+			$square->{ green } = 150;
 			$square->draw( $app );
 		}
 
@@ -289,9 +307,180 @@ sub mouse {
 
 
 
+sub create_group {
+	my( $event, $app, $selection, $squares ) =  @_;
+
+	$event->type == SDL_MOUSEBUTTONUP  &&  $selection
+		or return;
+
+	print "CREATE\n";
+
+
+	my @grouped;
+	for my $square ( $squares->@* ) {
+		if( ( $selection->{ x } > $square->{ x } + $square->{ width }
+			|| $selection->{ x } + $selection->{ width } < $square->{ x } )
+			&& ( $selection->{ y } > $square->{ y } + $square->{ height }
+			|| $selection->{ y } + $selection->{ height } < $square->{ y } )
+		){	
+			print "DRAW BLACK";
+			$selection->draw_black( $app );
+			return 1;
+			return;
+		}
+	}
+
+	my $db_group = db->resultset( 'Group' )->create({
+		x            => $selection->{ x },
+		y            => $selection->{ y },
+		width        => $selection->{ width },
+		height       => $selection->{ height },
+		red          => 10,
+		green        => 10,
+		blue         => 0,
+		moving       => 0,
+	});
+
+	my $id =  $db_group->id;
+
+	my $sx1 =  $selection->{ x };
+	my $sx2 =  $selection->{ x } + $selection->{ width };
+	my $sy1 =  $selection->{ y };
+	my $sy2 =  $selection->{ y } + $selection->{ height };
+
+
+	for my $square ( @squares ){
+		if( $square->{ x } > $sx1 && $square->{ x } < $sx2 
+		 && $square->{ y } > $sy1 && $square->{ y } < $sy2 
+		){	
+			push @grouped, $square;
+		}
+	}
+
+	for my $square ( @grouped ) {
+		$square->{ group_id } = $id;
+
+		my $f = db()->resultset( 'Figura' )->search({ id => $square->{ id } })->first;
+		$f->update({
+			group_id => $id,
+		})
+	}
+	return 1;
+}	
 
 
 
+sub selection {
+	my( $event, $app, $app_state_selection ) =  @_;
+
+	$event->type == SDL_MOUSEMOTION  && $app_state_selection 
+		or return;
+
+	print "SELECT\n";
+
+	$app_state_selection->{ width  } =  
+		$event->motion_x - $app_state_selection->{ x };
+	$app_state_selection->{ height } =
+		$event->motion_y - $app_state_selection->{ y };
+
+	# $app_state_selection->draw_black( $app );
+	$app_state_selection->draw( $app );
+	p $app_state_selection;
+
+}	
+
+sub group {
+	my( $event, $app, $squares, $selection ) = @_;
+
+	!$selection  &&  $event->type == SDL_MOUSEBUTTONDOWN
+		or return;
+
+	print "GROUP\n";
+
+	for my $square ( @$squares ){
+		if( (   $event->motion_x > $square->{ x }
+			&&  $event->motion_x < $square->{ x } + ( 50 * $scale_x ))
+			&& ($event->motion_y > $square->{ y }
+			&& $event->motion_y  < $square->{ y } + ( 50 * $scale_y ))
+		){	
+			return;
+		}
+	}
+
+	my %selection_i = (
+		x      => $event->motion_x,
+		y      => $event->motion_y,
+		red    => 120,
+		alpha  => 255,
+	);
+
+	return bless \%selection_i, "Figura";
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 	for my $group ( @groups ) {
+
+# 		if ( $group->{ extend }) {
+# 			$group->{ width  } = $event->motion_x - $group->{ x };
+# 			$group->{ height } = $event->motion_y - $group->{ y };
+# 			$group->draw( $app );
+# 		}
+
+# 		if( $event->type == SDL_MOUSEBUTTONUP ) {
+# 			$group->{ extend } = 0;
+# 		}
+# 	}
+		
+
+
+		# 	my $db_group = db->resultset( 'Group' )->create({
+		# 		x            => $event->motion_x,
+		# 		y            => $event->motion_y,
+		# 		width        => 0,
+		# 		height       => 0,
+		# 		red          => 10,
+		# 		green        => 10,
+		# 		blue         => 0,
+		# 		alpha        => 255,  
+		# 		moving       => 0,
+		# 		extend       => 1,
+		# 	});
+
+		# 	my $id =  $db_group->id;
+
+		# 	my $group =  Figura->new(
+		# 		$event->motion_x, $event->motion_y, 0, 0,
+		# 		10, 10, undef, 0, $scale_x, $scale_y, $id, 1,
+		# 	);
+
+		# 	push @groups, $group;
+		# }
 
 
 

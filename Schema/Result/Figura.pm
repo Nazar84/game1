@@ -45,6 +45,10 @@ $X->add_columns(
 		data_type   =>  'integer',
 		is_nullable => 1,
 	},
+	group_id => {
+		data_type   =>  'integer',
+		is_nullable => 1,
+	},
 );
 
 $X->set_primary_key( 'id' );

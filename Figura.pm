@@ -1,7 +1,7 @@
 package Figura;
 
 sub new {
-	my( $figura, $x, $y, $w, $h, $r, $g, $b, $m, $scale_x, $scale_y, $id ) = @_;
+	my( $figura, $x, $y, $w, $h, $r, $g, $b, $m, $scale_x, $scale_y, $id, $ex ) = @_;
 
 	my %figura = (
 		x            => $x * $scale_x,
@@ -16,6 +16,7 @@ sub new {
 		take_point_x => 0,
 		take_point_y => 0,
 		id           => $id // 0, 
+		extend       => $ex,
 	);
 	return bless \%figura;
 }
@@ -44,10 +45,10 @@ sub draw {
 		$figura->{ width },
 		$figura->{ height },
 	],[
-		$figura->{ red },
-		$figura->{ green },
-		$figura->{ blue },
-		$figura->{ alpha },
+		$figura->{ red   } // 0,
+		$figura->{ green } // 0,
+		$figura->{ blue  } // 0,
+		$figura->{ alpha } // 0,
 	]);
 }
 
