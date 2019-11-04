@@ -1,4 +1,5 @@
 requires 'Carton';
+requires 'DDP';
 requires 'SDL';
 requires 'SDLx::App';
 requires 'DBIx::Class';
