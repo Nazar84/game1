@@ -23,7 +23,6 @@ $app->add_event_handler( \&cursor );
 
 my @squares;
 
-
 my $selection;
 $app->add_event_handler( sub{ 
 	my $res =  group( @_, \@squares, $selection );
@@ -32,12 +31,13 @@ $app->add_event_handler( sub{
 	}
 	print "$selection<<\n";
 });
-$app->add_event_handler( sub{ selection( @_, $selection ) } );
+$app->add_event_handler( sub{ selection( @_, $selection, \@squares ) } );
 $app->add_event_handler( sub{ 
-	if( create_group( @_, $selection, \@squares ) ) {
-		$selection =  undef;
+	if(create_group( @_, $selection, \@squares ) ) {
+		$selection = undef;
 	}
 });
+$app->add_show_handler( sub{ arrange_group( @_, \@squares ) } );
 
 use Schema;
 
@@ -103,8 +103,6 @@ for my $square ( @squares, @groups ){
 
 $app->run();
 
-
-
 sub event {
     my ($event, $app) = @_;
 
@@ -147,6 +145,7 @@ sub show {
 	
 	$car->draw( $app ); 
 
+	# print "UPDATE\n";
     $app->update;
 }
 
@@ -223,16 +222,21 @@ sub cursor {
 	}
 }
 
+sub mouse_target_square {
+	my( $event, $square ) =  @_;
 
+	return $event->motion_x > $square->{ x }
+		&& $event->motion_x < $square->{ x } + ( 50 * $scale_x )
+		&& $event->motion_y > $square->{ y }
+		&& $event->motion_y < $square->{ y } + ( 50 * $scale_y )
+}	
 
+my $n;
 sub mouse {
 	my ($event, $app) = @_;
 
-	if( $event->type == SDL_MOUSEBUTTONDOWN 
-		&& $event->motion_x > $car->{ x }
-		&& $event->motion_x < $car->{ x } + ( 50 * $scale_x )
-		&& $event->motion_y > $car->{ y }
-		&& $event->motion_y < $car->{ y } + ( 50 * $scale_y )
+	if( $event->type == SDL_MOUSEBUTTONDOWN
+		&&  mouse_target_square( $event, $car )
 	){
 		my $r = int rand( 300 );
 
@@ -265,10 +269,7 @@ sub mouse {
 	for my $square ( @squares ){
 
 		if( $event->type == SDL_MOUSEBUTTONDOWN 
-			&& $event->motion_x > $square->{ x }
-			&& $event->motion_x < $square->{ x } + ( 50 * $scale_x )
-			&& $event->motion_y > $square->{ y }
-			&& $event->motion_y < $square->{ y } + ( 50 * $scale_y )
+			&& mouse_target_square( $event, $square )
 		){
 			$square->{ moving } = 1;
 			$square->{ blue }   = 200;
@@ -285,15 +286,9 @@ sub mouse {
 		}
 	}
 
-
-
 	for my $square ( @squares ){
 
-		if( $event->motion_x > $square->{ x }
-			&& $event->motion_x < $square->{ x } + ( 50 * $scale_x )
-			&& $event->motion_y > $square->{ y }
-			&& $event->motion_y < $square->{ y } + ( 50 * $scale_y )
-		){
+		if( mouse_target_square( $event, $square ) ){
 			$square->{ green } = 150;
 			$square->draw( $app );
 		}
@@ -313,50 +308,51 @@ sub create_group {
 	$event->type == SDL_MOUSEBUTTONUP  &&  $selection
 		or return;
 
-	print "CREATE\n";
-
-
 	my @grouped;
+
 	for my $square ( $squares->@* ) {
 		if( ( $selection->{ x } > $square->{ x } + $square->{ width }
 			|| $selection->{ x } + $selection->{ width } < $square->{ x } )
 			&& ( $selection->{ y } > $square->{ y } + $square->{ height }
 			|| $selection->{ y } + $selection->{ height } < $square->{ y } )
 		){	
-			print "DRAW BLACK";
 			$selection->draw_black( $app );
 			return 1;
-			return;
 		}
 	}
 
-	my $db_group = db->resultset( 'Group' )->create({
-		x            => $selection->{ x },
-		y            => $selection->{ y },
-		width        => $selection->{ width },
-		height       => $selection->{ height },
-		red          => 10,
-		green        => 10,
-		blue         => 0,
-		moving       => 0,
-	});
-
-	my $id =  $db_group->id;
+#если попадаем на группу, то выход!
 
 	my $sx1 =  $selection->{ x };
 	my $sx2 =  $selection->{ x } + $selection->{ width };
 	my $sy1 =  $selection->{ y };
 	my $sy2 =  $selection->{ y } + $selection->{ height };
 
-
 	for my $square ( @squares ){
-		if( $square->{ x } > $sx1 && $square->{ x } < $sx2 
-		 && $square->{ y } > $sy1 && $square->{ y } < $sy2 
+		if( $square->{ x } > $sx1 && $square->{ x } + $square->{ width }  < $sx2 
+		 && $square->{ y } > $sy1 && $square->{ y } + $square->{ height } < $sy2 
 		){	
-			push @grouped, $square;
+			push @grouped, $square
+			or return;
 		}
 	}
 
+
+
+	my $db_group = db->resultset( 'Group' )->create({
+		x            => $selection->{ x },
+		y            => $selection->{ y },
+		width        => $selection->{ width },
+		height       => $selection->{ height },
+		red          => $selection->{ red },
+		green        => 0,
+		blue         => 0,
+		moving       => 0,
+		alpha        => $selection->{ alpha },
+	});
+
+	my $id = $db_group->id;
+	
 	for my $square ( @grouped ) {
 		$square->{ group_id } = $id;
 
@@ -365,8 +361,45 @@ sub create_group {
 			group_id => $id,
 		})
 	}
+	$selection->draw_black( $app );
 	return 1;
 }	
+
+
+
+sub arrange_group {
+	my( $delta, $app, @squares ) =  @_;
+
+	my @groups = db()->resultset( 'Group' )->all;
+
+	@groups or return;
+
+	for my $group( @groups ) {
+# DB::x;
+		# my $id = $group->id;
+
+		my @grouped = db()->resultset( 'Figura' )->search({ group_id => $group->id })->all;
+		my $ng = $#grouped +1;
+		$group->{ width }  = 70;
+		$group->{ height } = 10 + ( $ng * 50 + $ng * 10 );
+# print "$id\n";
+
+		$group->Figura::draw( $app );
+	}
+	
+
+	#1 упорядочить поле по числу квадратов
+
+	# #2 упрядочить квадраты в поле
+	# my $n = $ng * 60;
+	# for my $square( @grouped ) {
+	# 	$square->{ x } = $n + $arrange->{ x } + 10;
+	# 	$square->{ y } = $arrange->{ y } + 10;
+	# 	$n -= 1;
+	# }
+
+	#3 отривоска 
+}
 
 
 
@@ -376,18 +409,38 @@ sub selection {
 	$event->type == SDL_MOUSEMOTION  && $app_state_selection 
 		or return;
 
-	print "SELECT\n";
+	$app_state_selection->draw_black( $app );
 
-	$app_state_selection->{ width  } =  
-		$event->motion_x - $app_state_selection->{ x };
-	$app_state_selection->{ height } =
-		$event->motion_y - $app_state_selection->{ y };
+	my $mx = $event->motion_x;
+	my $my = $event->motion_y;
+	my $tx = $app_state_selection->{ take_point_x };
+	my $ty = $app_state_selection->{ take_point_y };
 
-	# $app_state_selection->draw_black( $app );
+	if( $mx > $tx ) {
+		$app_state_selection->{ width } = $mx - $app_state_selection->{ x };
+	}
+	else {
+		$app_state_selection->{ x } = $mx;
+		$app_state_selection->{ width } = $tx - $mx;
+	}
+
+	if( $my > $ty ) {
+		$app_state_selection->{ height } = $my - $app_state_selection->{ y };
+	}
+	else {
+		$app_state_selection->{ y }      = $my;
+		$app_state_selection->{ height } = $ty - $my;
+	}
+
 	$app_state_selection->draw( $app );
-	p $app_state_selection;
+	# p $app_state_selection;
 
+	for my $square ( @squares ){
+		$square->draw( $app );
+	}
 }	
+
+
 
 sub group {
 	my( $event, $app, $squares, $selection ) = @_;
@@ -398,298 +451,21 @@ sub group {
 	print "GROUP\n";
 
 	for my $square ( @$squares ){
-		if( (   $event->motion_x > $square->{ x }
-			&&  $event->motion_x < $square->{ x } + ( 50 * $scale_x ))
-			&& ($event->motion_y > $square->{ y }
-			&& $event->motion_y  < $square->{ y } + ( 50 * $scale_y ))
-		){	
+		if( mouse_target_square( $event, $square ) ){	
 			return;
 		}
 	}
 
 	my %selection_i = (
-		x      => $event->motion_x,
-		y      => $event->motion_y,
-		red    => 120,
-		alpha  => 255,
+		x            => $event->motion_x,
+		y            => $event->motion_y,
+		red          => 120,
+		alpha        => 255,
+		take_point_x => $event->motion_x,
+		take_point_y => $event->motion_y,
 	);
 
 	return bless \%selection_i, "Figura";
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# 	for my $group ( @groups ) {
-
-# 		if ( $group->{ extend }) {
-# 			$group->{ width  } = $event->motion_x - $group->{ x };
-# 			$group->{ height } = $event->motion_y - $group->{ y };
-# 			$group->draw( $app );
-# 		}
-
-# 		if( $event->type == SDL_MOUSEBUTTONUP ) {
-# 			$group->{ extend } = 0;
-# 		}
-# 	}
-		
-
-
-		# 	my $db_group = db->resultset( 'Group' )->create({
-		# 		x            => $event->motion_x,
-		# 		y            => $event->motion_y,
-		# 		width        => 0,
-		# 		height       => 0,
-		# 		red          => 10,
-		# 		green        => 10,
-		# 		blue         => 0,
-		# 		alpha        => 255,  
-		# 		moving       => 0,
-		# 		extend       => 1,
-		# 	});
-
-		# 	my $id =  $db_group->id;
-
-		# 	my $group =  Figura->new(
-		# 		$event->motion_x, $event->motion_y, 0, 0,
-		# 		10, 10, undef, 0, $scale_x, $scale_y, $id, 1,
-		# 	);
-
-		# 	push @groups, $group;
-		# }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# my $points; #очки;
-# my $o_i;	#колличество уничтоженых преград;
-# my $scale_x = $app_w / 350;
-# my $scale_y = $app_h / 350;
-
-# my $car = Figura->new( 150, 300, 50, 50, undef, 255, undef, $scale_x, $scale_y );
-
-# my $gun = Figura->new( 0, 0, 1, 1, undef, undef, undef, $scale_x, $scale_y );
-
-# my @obstruction;
-# for ( 1..10 ) {
-# 	my $rand = int rand(7);
-# 	my $obstruction = Figura->new(
-# 		50 * $rand, -50 * $rand, 50, 50,
-# 		255, undef, undef, $scale_x, $scale_y
-# 	);
-# 	push @obstruction, $obstruction;
-# }
-
-# $app->run();
-
-
-
-# sub event {
-#     my ($event, $app) = @_;
-
-#     if( $event->type == SDL_QUIT ) {
-#     	$app->stop;
-#     }
-
-#     elsif($event->type == SDL_ACTIVEEVENT) {
-#         if($event->active_state & SDL_APPINPUTFOCUS) {
-#             if($event->active_gain) {
-#                 return 1;
-#             }
-#             else {
-#                 $app->pause(\&event);
-#             }
-#         }
-#     }
-
-#     elsif($event->type == SDL_KEYDOWN) {
-#         if($event->key_sym == SDLK_SPACE) {
-#             return 1 if $app->paused;
-             
-#             $app->pause(\&event);
-#         }
-#     }
-# }
-
-
-
-# sub show {
-#     my ($delta, $app) = @_;
-
-#     #obstruction
-# 	for my $i ( @obstruction ){
-# 		$i->draw_black( $app );
-			
-# 		$i->{ y } +=  $scale_y;
-		
-# 		$i->draw( $app ); 
-	
-# 		if( $i->{ y } > $scale_y * 350) {
-# 			$i->{ y } = -50 * (int rand(5)) * $scale_y;
-# 			$i->{ x } = (int rand(6) + 1) * 50 * $scale_x;
-# 			$i->{ red } = 255;
-# 		}
-
-# 		if(int $i->{ x } == int $car->{ x }
-# 			&& $i->{ y } >= $car->{ y } - $scale_y * 49
-# 			&& $i->{ red } > 200
-# 		){
-# 				$app->stop;
-# 				print "BUMSSS...\npoints:$points\nobstruction:$o_i\n";				
-# 		}
-# 	}
-
-#     #car
-# 	$car->draw_black( $app );
-
-# 	$car->{ x } +=  $car->{ dx } * $scale_x * 50;
-# 	$car->{ y } +=  $car->{ dy } * $scale_y * 50;
-# 	$car->{ dx } =  0;
-# 	$car->{ dy } =  0;
-	
-# 	$car->draw( $app ); 
-
-#     $app->update;
-#     $o_i += 1;
-# }
-
-
-
-# sub ride {
-# 	my ($event, $app) = @_;
-
-# 	$event->type == SDL_KEYDOWN
-# 		or return;
-
-# 	if( $event->key_sym == SDLK_LEFT ) {
-# 		$car->{ dx } -= 1;
-# 	}
-
-# 	if( $event->key_sym == SDLK_RIGHT ) {
-# 		$car->{ dx } += 1;
-# 	}
-# }
-
-
-
-# sub move {
-# 	my ($step, $app, $t) = @_;
-
-# 	#car
-# 	if( $car->{ x } >  $scale_x * 300) {
-# 	    $car->{ x } =  $scale_x * 300;
-# 	}
-
-# 	if( $car->{ x } < 0) {
-# 		$car->{ x } = 0;
-# 	}
-
-# 	#gun
-# 	for my $i ( @obstruction ){
-# 		if( $gun->{ x } > $i->{ x }
-# 			&& $gun->{ x } < $i->{ x } + 50 * $scale_x
-# 			&& $gun->{ y } > $i->{ y }
-# 			&& $gun->{ y } < $i->{ y } + 50 * $scale_y
-# 			&& $i->{ red } == 255
-# 		){
-# 			$i->{ red } = 0;
-			
-# 		}
-# 	}
-
-# 	if( $points > 5000 ) {
-# 		$app->stop;
-# 		print "You are Winner\n";
-# 	}
-
-# 	$points += 1;
-# }
-
-
-
-# sub cursor {
-# 	my ($event, $app) = @_;
-
-# 	$event->type == SDL_MOUSEMOTION
-# 	or return;
-
-# 	$gun->draw_black( $app );
-	
-# 	$gun->{ x } = $event->motion_x;
-# 	$gun->{ y } = $event->motion_y;
-
-# 	$gun->draw( $app );
-# }
